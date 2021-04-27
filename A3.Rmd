@@ -1,0 +1,193 @@
+---
+title: "A3"
+output:
+  pdf_document:
+    latex_engine: xelatex
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r cars}
+library(tidyverse)
+library(dplyr)
+library(car)
+library(knitr)
+library(devtools)
+library(ggplot2)
+library(tidyr) 
+```
+
+## Exercise 1 
+
+
+```{r pressure, echo=FALSE}
+population=read.csv("D:/Luyi/ECON613/Econ613/Assignments/population.csv")
+crime_long=read.csv("D:/Luyi/ECON613/Econ613/Assignments/crime_long.csv")
+officers=read.csv("D:/Luyi/ECON613/Econ613/Assignments/officers.csv")
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+
+## Exercise 2
+```{r}
+a<-aggregate(crime_long$crimes, by=list(month=crime_long$crime_month), FUN=sum)
+colnames(a)<-c("month","totalcrime")
+head(a)
+```
+```{r}
+ggplot(a, aes(x = month, y = totalcrime, group = 1))+geom_line()
+```
+
+```{r}
+e2<-left_join(population,crime_long, by=c("month"="crime_month","district"="district"))
+head(e2)
+```
+```{r}
+e2n<-e2 %>% group_by(month,district, crime_type) %>% 
+       summarise(total_crime =sum(crimes))
+head(e2n)
+```
+```{r}
+e2n<-spread(e2n, key = crime_type, value = total_crime)
+head(e2n)
+```
+```{r}
+e2n2<-e2 %>% group_by(month,district) %>% 
+       summarise(total_crime =sum(crimes))
+head(e2n2)
+```
+
+```{r}
+e2n1<-e2 %>% group_by(month,district) %>% 
+  summarise(median_income=median(p50_inc),black_share=sum(tot_black)/sum(tot_pop),hispanic_share=sum(tot_hisp)/sum(tot_pop),white_share=sum(tot_white)/sum(tot_pop))
+head(e2n1)
+```
+
+```{r}
+panel<-left_join(e2n,e2n1, by=c("month"="month","district"="district"))
+panel<-left_join(panel,e2n2, by=c("month"="month","district"="district"))
+panel<-subset(panel, select=-c(other,drug))
+panel<-subset(panel, select=-c(5))
+head(panel)
+```
+## Exercise 3
+```{r}
+panel2<-left_join(panel,officers,by=c("month"="month","district"="unit"))
+panel2<-drop_na(panel2)
+head(panel2)
+```
+```{r}
+model<-lm(arrest ~tenure+total_crime+median_income+black_share+hispanic_share+white_share,data=panel2)
+summary(model)
+```
+## Exercise 4
+```{r}
+model4<-lm(arrest ~tenure+total_crime+median_income+black_share+hispanic_share+white_share+c(month)+factor(district),data=panel2,x=FALSE)
+summary(model4)
+```
+## Exercise 5
+1. consider within estimator
+```{r}
+panel3<-panel2 %>%
+  group_by(NUID) %>%
+  summarise(meanarrest=mean(arrest),meantenure=mean(tenure),meantotal_crime=mean(total_crime),
+              meanmed=mean(median_income), meanblack=mean(black_share),meanhis=mean(hispanic_share),meanwhite=mean(white_share))
+head(panel3)
+```
+```{r}
+between<-lm(meanarrest ~meantenure+meantotal_crime+meanmed+meanblack+meanhis+meanwhite,data=panel3)
+summary(between)
+```
+
+
+consider within estimator
+```{r}
+panel4<-left_join(panel3,panel2,by=c("NUID"="NUID"))
+```
+
+```{r}
+panel4 <-panel4 %>%
+  mutate(arrest=arrest-meanarrest,tenure=tenure-meantenure,black=black_share-meanblack,white=white_share-meanwhite,hispanic=hispanic_share-meanhis,median_income=median_income-meanmed)
+```
+
+```{r}
+within<-lm(arrest~tenure+total_crime+median_income+black_share+hispanic_share+white_share,panel4)
+summary(within)
+```
+
+consider first difference estimator
+```{r}
+panel5<-panel2 %>%
+  group_by(NUID) %>%
+  mutate(beforetenure = lag(tenure),beforearrest=lag(arrest),before_crime=lag(total_crime),before_median=lag(median_income),before_black=lag(black_share),before_white=lag(white_share),before_his=lag(hispanic_share),order_by=month)
+panel5 <-panel5 %>%
+  mutate(tenurediff=tenure-beforetenure,arrestdiff=arrest-beforearrest,crime=total_crime-before_crime,median=median_income-before_median,black=black_share-before_black,his=hispanic_share-before_his,white=white_share-before_white)
+panel5<-drop_na(panel5)
+```
+
+```{r}
+firstd<-lm(arrestdiff~tenurediff+median+crime+median+black+his+white,panel5)
+summary(firstd)
+```
+Comparing these three results, the estimator for beta in within and between are quite similiar, while coeffcients for other varibales are quite different. While first difference estimator has a large diff. we can see that the first difference estimator can not handle time fixed effects, the failure for considering time also exists for withiin and between estimator. Also, first difference lack cross section information and fixed effects(since all of them are offset). 
+
+using GMM in one step:
+consider dataset, we should use panel2 
+the computation eats all my memory and I coould not get the result at all.
+```{r}
+phi=length(unique(panel2$district))
+chi=length(unique(panel2$month))
+alpha=length(unique(panel2$NUID))
+beta=0
+gamma=5
+```
+initialize the coefficient&create intercept
+```{r}
+panel2$intercept=1
+alpha1<-rep(0,alpha)
+```
+
+```{r}
+library(fastDummies)
+library(dummies)
+X=panel2
+X<-dummy_cols(X,select=c("month","district"))
+
+y=panel2$arrest
+```
+
+```{r}
+library(hash)
+```
+
+```{r}
+h <- hash()
+individual<-as.list(unique(X$NUID))
+```
+```{r}
+coeff<-rep(1,1+1+5+phi+chi)
+```
+
+consider function (my pc cannot handle this computation)
+```{r include=FALSE}
+#gmm<-function(coeff,alpha1,individual)
+  #for (i in individual){
+  #h[[i]]<-alpha1[k]
+  #k=k+1}
+#X$f=as.data.frame(lapply(X$NUID, function(x) {f=h[[as.character(x)]]}))
+#epsilon=y-X*coeff-f
+#g=X.T%*%epsilon
+#final=sum(g)
+#final=as.matrix(final)
+#return(final %*% final.T)
+```
+
+result<-optim(runif(10,-0.1,0.1),gmm,method="BFGS")
